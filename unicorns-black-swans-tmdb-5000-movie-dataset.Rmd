@@ -1,0 +1,281 @@
+---
+title: "Unicorns & Black swans"
+author: "Georgi Petkov"
+date: "18 February 2019"
+output:
+ html_document:
+    toc: true
+    theme: cosmo
+    highlight: tango
+    code_folding: hide
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+
+This is going to be an attempt to answer the questions raised in the overview part for TMDB 5000 Movie Dataset as much as it is achievable. The topic is close to my heart and I've been searching high and low for sources of information. Unfortunately, this dataset is not with very good quality and what I mean by this is that there's a lot of missing data, clearly wrong data(checked with a bunch of other sources),as mentioned in the preview of the dataset- it's not clear if all the monetary variables are in US Dollars and who knows what else.
+
+## Load libraries
+```{r,echo=TRUE,message=FALSE,warning=FALSE}
+library(tidyverse)
+library(lubridate)
+library(RColorBrewer)
+library(forcats)
+library(DT)
+library(DataExplorer)
+library(ggthemes)
+library(ggrepel)
+library(jsonlite)
+library(plotly)
+library(knitr)
+library(kableExtra)
+library(trelliscopejs)
+```
+
+## Load data
+```{r, echo=FALSE,message=FALSE}
+ movies <- read_csv("../input/tmdb_5000_movies.csv")
+ 
+ cts <- read_csv("../input/tmdb_5000_credits.csv")
+
+movies %>%
+  glimpse()
+```
+
+## Preprocessing and sneak peek of the data
+The file "tmdb_5000_credits.csv" contains movie id and two JSON columns. Special "Thank you."" to Erik Bruin (https://www.kaggle.com/erikbruin) from whom I borrowed this code.
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+cts_df <- cts %>%
+  filter(nchar(cast)>2) %>%
+  mutate(js = lapply(cast, fromJSON)) %>%
+  unnest(js) %>%
+  select(-cast, -crew, -credit_id) %>%
+  rename(actor=name, movie_cast_id=cast_id, actor_id=id) %>%
+  mutate_if(is.character, factor)
+cts_df %>% 
+  head() %>% 
+  DT::datatable()
+```
+
+## Unicorns & Black swans
+A bit of an explanation about the meaning of these terms."Unicorn" is used as a venture that reaches value over one billion dollars and "Black swan" is a term coined by Nassim Nicholas Taleb as an event that is very difficult to predict and has a magnitude unseen before in our case the flop of a movie that has huge budget, top actors and renown director.
+Since we are going to use mostly financial results to determine black from white, let's remove all the movies for which ether the budget or the revenue is missing.That leave us with  `r movies %>% 
+    filter(!revenue <=0|!budget <=0) %>% 
+  count()`in movies_f.
+
+```{r,echo=FALSE,message=FALSE}
+movies_f <- movies %>% 
+    filter(!revenue <=0 &!budget <=0) 
+```
+
+
+
+
+```{r,echo=FALSE,message=FALSE,fig.height=8,fig.width=10}
+movies %>%
+    mutate(releas_year=str_sub(release_date,start = 1L,end = 4L)) %>%
+    filter(revenue >1000000000) %>% 
+    ggplot(aes(reorder(title,revenue),revenue,fill=releas_year)) +
+    geom_bar(stat = "identity") +
+    scale_fill_brewer(palette = "Paired") +
+    coord_flip() +
+    theme_light() +
+    geom_text(aes(label=scales::comma_format()(revenue),hjust= 1.1)) +
+    scale_x_discrete(labels = function(x) str_wrap(x, width = 30)) +
+    scale_y_continuous(labels = scales::dollar) +
+    labs(title = "The movie industry developed to a level\nwhere a Unicorn is born every year!",
+         subtitle = "After 2009 even a couple of them.",
+         x="Movie title", y="Revenue") +
+  theme(plot.title = element_text(size = 18)) +
+     theme(plot.subtitle = element_text(size = 12)) +
+  theme(legend.justification=c(1,0), legend.position=c(1,0))
+  
+```
+
+We could probably explain the fact that more movies become Unicorns with the rising budgets.
+
+```{r,echo=FALSE,message=FALSE,fig.height=10,fig.width=10}
+ movies_f %>% 
+           mutate(rel_year=str_sub(release_date,start = 1L,end = 4L),
+                  rel_month= str_sub(release_date,start = 6L,end = 7L)) %>% 
+           mutate(profit= revenue-budget) %>% 
+    mutate(company=str_extract(production_companies,'(?<=\\s\").*?(?=")')) %>%
+           #filter(company == "Universal Pictures") %>% 
+           ggplot(aes(rel_year,budget)) +
+           geom_boxplot() +
+           coord_flip() +
+           theme_light() +
+           scale_y_continuous(labels = scales::dollar) +
+  labs(title = "Budgets are rising every year.",x="Releas year",y="Budget")
+```
+
+
+```{r,echo=FALSE,message=FALSE,fig.height=6,fig.width=10}
+movies %>% 
+  ggplot(aes(x=original_language,y=revenue))+
+  geom_boxplot() +
+  theme_light() +
+  scale_y_continuous(labels = scales::dollar) +
+  labs(title = "Unicorns exist only in English speaking versions")
+```
+
+Some of the producing companies generate significantly bigger revenue than the budget of the movies they film.
+
+```{r,echo=FALSE,message=FALSE,fig.width=10}
+
+m_big <- movies %>% 
+  filter(nchar(production_companies)>2) %>% 
+  mutate(js=lapply(production_companies,fromJSON)) %>% 
+  unnest(js) %>% 
+  inner_join(cts_df,by=c("id"="movie_id"))
+
+ top_company <- m_big %>% 
+    #filter(original_language != "en") %>% 
+    group_by(name) %>% 
+    filter(!duplicated(id)) %>% 
+    summarise(tot_budget=sum(budget,na.rm = TRUE),
+              tot_revenue=sum(revenue,na.rm = TRUE),n_m=n()) %>% 
+    top_n(6,tot_revenue) %>% 
+    arrange(desc(n_m))
+  
+m_big %>% 
+  filter(name %in% top_company$name) %>%
+  group_by(name) %>% 
+  mutate(n_m=n_distinct(id)) %>% 
+  select(name,budget,revenue,n_m) %>% 
+  gather(finance,value,2:3) %>% 
+  ggplot(aes(finance,value)) +
+  geom_boxplot() +
+  theme_light() +
+  facet_wrap(~ name,scales = "free_x") +
+    scale_y_continuous(labels = scales::dollar) +
+    theme(legend.position = "bottom") +
+    labs(title = "")
+
+```
+
+```{r,echo=FALSE,message=FALSE,fig.height=8,fig.width=10}
+  m_big %>% 
+    filter(str_detect(name,"Marvel")) %>%
+    filter(!duplicated(id)) %>%
+    mutate(prop=revenue/budget,dif_col=revenue > budget*1) %>% 
+    ggplot(aes(reorder(original_title,prop),prop,fill=dif_col)) +
+    geom_bar(stat = "identity") +
+    scale_fill_brewer(palette = "Set1") +
+    coord_flip() +
+    theme_light() +
+    theme(legend.position = "none") +
+    scale_y_continuous(limits = c(0,15)) +
+    geom_text(aes(label=round(prop,1),hjust= -0.1)) +
+    labs(title = "Just one movie with revenue less than it's budget",
+         subtitle = "Marvel is doing great.",
+         y="Revenue/budget",x="Movie title")
+```
+
+
+
+
+## Define the flop
+The revenue minus the expenses give us the profit, only problem in our case is that the budget is just a part of the expenses which does not include the expenses for distributing a movie.Some say that in most cases the break even point for a movie is as high as twice the budget for the movie. Using this rule will leave us with just 
+
+```{r,echo=FALSE,message=FALSE}
+movies_f %>% 
+    mutate(Flop=revenue < budget*2) %>%
+  count(Flop) %>% 
+  kable() %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+But as we don't know exactly what the numbers are we can consider a movie as a flop when it didn't make in revenue even its budget.
+
+```{r,echo=FALSE,message=FALSE}
+movies_f %>% 
+    mutate(Flop=revenue < budget) %>%
+  count(Flop) %>% 
+  kable() %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+Of course, most of the flopped movies are in English and they are the ones losing BIG, but movies in German very consistently lose money.
+
+```{r,echo=FALSE,message=FALSE,fig.height=6,fig.width=10}
+  movies_f %>%  
+    mutate(rel_year=str_sub(release_date,start = 1L,end = 4L),
+           rel_month= str_sub(release_date,start = 6L,end = 7L)) %>% 
+    mutate(profit= revenue-budget) %>% 
+    filter(profit < 0) %>% 
+    ggplot(aes(original_language, profit)) +
+    geom_boxplot() +
+    theme_light() +
+    scale_y_continuous(labels = scales::dollar) +
+    labs(title = "Movies in German language very consistently lose money!", 
+         subtitle = "", x="Original language",y="Loss")
+```
+
+
+```{r,echo=FALSE,message=FALSE,fig.height=6}
+ggplotly(movies_f %>%
+             mutate(Flop=revenue < budget) %>% 
+             #filter(Loss == TRUE) %>%
+             mutate(budget=budget/1000000) %>% 
+             count(budget=cut_width(budget, 10,center = 5),Flop) %>% 
+             arrange(desc(n)) %>% 
+             mutate(prop= n/sum(n)) %>% 
+             ggplot(aes(budget,n,fill=Flop)) +
+             geom_bar(stat = "identity") +
+             coord_flip() +
+             #scale_y_continuous(labels = scales::percent) +
+             theme_light() +
+             #geom_text(aes(label=n,hjust= -0.5)) +
+             scale_fill_brewer(palette = "Set1",direction = -1) +
+             labs(title = "Strange rise of the number of movies with budget\nbetween 140-150 mil.dollars",
+                  y="Number of movies",x="Budget devidet in buckets of million dollars"))
+  
+  
+```
+
+If we keep digging further you might see that in the bucket 140-150M budget it's likely that you are not only going to make a profit but there's a significant chance to get a Unicorn. The big budget movies are just a few spread in different buckets but in general give us the feeling that if you spend more than 250M you will probably have a huge revenue.
+
+```{r,echo=FALSE,message=FALSE,fig.height=15,fig.width=10}
+movies_f %>% 
+  mutate(budget=budget/1000000,revenue=revenue/1000000) %>% 
+  mutate(bucket=cut_width(budget, 10,center = 5),n=n_distinct(id)) %>% 
+  group_by(original_title) %>% 
+  #mutate(n_m=n_distinct(id)) %>% 
+  select(original_title,budget,revenue,bucket,n) %>% 
+  gather(finance,value,2:3) %>% 
+  ggplot(aes(finance,value)) +
+  geom_boxplot() +
+  theme_light() +
+  facet_wrap(~ bucket,scales = "free",nrow = 10,ncol = 3) +
+  scale_y_continuous(labels = scales::dollar)
+```
+
+```{r,echo=FALSE,message=FALSE,fig.height=8,fig.width=10}
+  
+  movies_f %>% 
+    mutate(profit= revenue-budget,release_year=factor(year(release_date))) %>% 
+    select(budget,revenue,profit,title,release_year) %>% 
+    arrange(profit) %>% 
+    slice(1:10) %>% 
+    ggplot(aes(reorder(title,profit*(-1)),profit,fill=release_year)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    theme_light()+
+    scale_fill_brewer(palette = "Paired") +
+    scale_y_reverse(labels = scales::dollar) +
+    scale_x_discrete(labels = function(x) str_wrap(x, width = 20)) +
+    theme(legend.justification=c(1,0), legend.position=c(1,0)) +
+    labs(title = "Even Johnny Depp can't guarantee success!",
+         subtitle = "Or...., can he?",
+         x="Movie title", y="Loss")
+```
+
+Here comes the problem with finding the flopped movies! According to the data "The Lone Ranger" is one of the biggest flops in the history of the cinema, but if you check IMDB you will find out that the movie made some 40M profit.
+A bit lower on the chart is "Metropolis" with a loss of over 90M - which made me think twice when I saw that it was released 1927. When you Google the title- you get a whole different story.
+
+This is a work in progress, so I will continue to update with new code.
+

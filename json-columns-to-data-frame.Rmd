@@ -1,0 +1,152 @@
+---
+title: "'JSON' columns to data frame"
+subtitle: "For R users"
+author: "Georgi Petkov"
+date: "04 March 2019"
+output:
+ html_document:
+    toc: true
+    theme: cosmo
+    highlight: tango
+    code_folding: hide
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+
+TMDB Box Office Prediction competition comes with data in a wired format, at least to me.
+Maybe, I am missing something but some of the columns are in a format that is supposed to be JSON,
+I believe so because other similar datasets have it this way, but the single quotation will not let us use
+"jsonlight" package to convert it to a data frame. The following code is my solution to the problem.
+If you find it useful please upvote or if you have any suggestions leave a comment.
+
+## Load libraries
+```{r,echo=TRUE,message=FALSE,warning=FALSE}
+library(tidyverse)
+library(DT)
+```
+
+## Load data
+```{r, echo=FALSE,message=FALSE}
+train <- read_csv("../input/train.csv")
+
+train %>%
+  glimpse()
+```
+
+## Preprocessing and sneak peek of the data
+The way I've decided to go about this problem is to extract the data, split the string, name each element and put everything in a df
+for each "JSON" column.
+
+## Cast
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+cast_list <- list()
+
+for (i in seq_along(train$cast)) {
+  cast_list[[i]] <- train$cast[[i]] %>%
+    str_extract_all('(?<=\\{).*?(?=\\})') %>%  #extract everything between {}
+    str_split("(?<=[:digit:]|[:punct:]), ",
+              n=Inf,simplify = TRUE) %>%       #split on ","
+    str_extract_all('(?<=\\:[:space:]).*') %>% #get the part after the semicolon
+    str_replace_all("'|\"","") %>% #clean the unwanted punctuation
+    matrix( ncol = 8,  byrow = TRUE,dimnames=list(c(),
+                                                  c("cast_id","character","credit_id","gender","id",
+                                                    "name","order","profile_path"))) %>% #convert to matrix
+    as_tibble(stringsAsFactors = FALSE)#convert the matrix to tibble
+}
+
+# Name the list
+names(cast_list) <- c(1:3000) #name the list with the sequential number of the list element
+
+# Create df with a column that identifies each movie
+cast_df <- bind_rows(cast_list, .id = 'movie_id')#create single df with a column that identifies the movies
+
+
+cast_df %>% 
+  head(10) %>% 
+  DT::datatable()
+
+```
+
+## Genres
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+genres_list <- list()
+for (i in seq_along(train$genres)) {
+  genres_list[[i]] <- train$genres[[i]] %>%
+    str_extract_all('(?<=\\{).*?(?=\\})') %>% 
+    str_split("(?<=[:digit:]|[:punct:]), ",n=Inf,simplify = TRUE) %>% 
+    str_extract_all('(?<=\\:[:space:]).*') %>% 
+    str_replace_all("[:punct:]","") %>% 
+    matrix( ncol = 2,  byrow = TRUE,dimnames=list(c(),
+                                                  c("id","name"))) %>% 
+    as_tibble(stringsAsFactors = FALSE)
+}
+
+names(genres_list) <- c(1:3000)
+
+genres_df <- bind_rows(genres_list, .id = 'movie_id')
+
+genres_df %>% 
+  head(10) %>% 
+  DT::datatable()
+```
+
+## Production companies
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+production_companies_list <- list()
+for (i in seq_along(train$production_companies)) {
+  production_companies_list[[i]] <- train$production_companies[[i]] %>%
+    str_extract_all('(?<=\\{).*?(?=\\})') %>% 
+    str_split("(?<=[:digit:]|[:punct:]), ",n=Inf,simplify = TRUE) %>% 
+    str_extract_all('(?<=\\:[:space:]).*') %>% 
+    str_replace_all("[:punct:]","") %>% 
+    matrix( ncol = 2,  byrow = TRUE,dimnames=list(c(),
+                                                  c("name","id"))) %>% 
+    as_tibble(stringsAsFactors = FALSE)
+}
+
+names(production_companies_list) <- c(1:3000)
+
+production_companies_df <- bind_rows(production_companies_list, .id = 'movie_id')
+
+
+production_companies_df %>% 
+  head(10) %>% 
+  DT::datatable()
+```
+
+
+## Crew
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+
+crew_list <- list()
+
+for (i in seq_along(train$crew)) {
+  crew_list[[i]] <- train$crew[[i]] %>%
+    str_extract_all('(?<=\\{).*?(?=\\})') %>% 
+    str_split("(?<=[:digit:]|[:punct:]), ",n=Inf,simplify = TRUE) %>% 
+    str_extract_all('(?<=\\:[:space:]).*') %>% 
+    str_replace_all("[:punct:]","") %>% 
+    matrix( ncol = 7,  byrow = TRUE,dimnames=list(c(),
+   c("credit_id","department","gender","id","job","name","profile_path"))) %>% 
+    as_tibble(stringsAsFactors = FALSE)
+}
+
+names(crew_list) <- c(1:3000)
+
+crew_df <- bind_rows(crew_list, .id = 'movie_id')
+
+crew_df%>% 
+  head(10) %>% 
+  DT::datatable()
+```
+
+I will assume that if anybody had a problem with figuring out how to extract the data from these columns this kernel will make his life easier.
+
